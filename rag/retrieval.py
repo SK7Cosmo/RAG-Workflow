@@ -40,26 +40,42 @@ def retrieve_top_results_by_distance(query, collection, categories=None, top_k=3
 		Filters the chunk only if distance metric is lesser than the threshold
 		If 'categories' are provided, will be used as a filter
 	"""
-
-	query_params = {
-		"query_texts": [query],
-		"n_results": top_k
-	}
-
-	# Add filter only if categories exist
-	if categories[0]:
-		query_params["where"] = {"category": {"$in": categories}}
-
-	# Search for top_k results matching the user's query (and optional filter)
-	results = collection.query(**query_params)
-
 	retrieved_chunks = []
 
-	# Safeguard in case no results are found
-	if not results['documents'] or not results['documents'][0]:
-		return retrieved_chunks
+	if categories[0]:
+		# If user opted to query with category filter
+		where_clause = {"category": {"$in": categories}}
 
-	# Gather each retrieved chunk, along with its distance score
+		# Perform the initial search with category filter (if provided)
+		results = collection.query(
+			query_texts=[query],
+			n_results=top_k,
+			where=where_clause
+		)
+
+		# Fallback in case no results are found with category filter - no filter query
+		if not results['documents'] or not results['documents'][0]:
+			results = collection.query(
+				query_texts=[query],
+				n_results=top_k,
+			)
+
+		# Return empty list if no results are found even without filter
+		if not results['documents'] or not results['documents'][0]:
+			return retrieved_chunks
+
+	else:
+		# If user opted to query without category filter
+		results = collection.query(
+				query_texts=[query],
+				n_results=top_k,
+			)
+
+		# Return empty list if no results are found
+		if not results['documents'] or not results['documents'][0]:
+			return retrieved_chunks
+
+	# Gather each retrieved chunk if results are found in the query, along with its distance score
 	for i in range(len(results['documents'][0])):
 		if results['distances'][0][i] > distance_threshold:
 			continue 	# Not matching enough with the query
