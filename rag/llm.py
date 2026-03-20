@@ -55,25 +55,34 @@ def generate_naive_response(query):
 	return get_llm_response(prompt)
 
 
-def generate_rag_response(query, rag_content):
+def generate_rag_response(query, rag_content, additional_prompt=None):
 	"""
 	Using the custom knowledge base to enrich the user prompt
 	and customize the LLM's response
 
 	If no info relevant to the query found in the knowledge base,
 	avoids hallucination and politely refuses to answer
+
+	If fallback is true, user intimated that response could not be filtered by provided category
+	Hence, used only query to generate response
 	"""
 	if rag_content:
 		prompt = f"Question: {query}\nAnswer using only the following context:\n"
 		for fact in rag_content:
 			prompt += f"- {fact}\n"
-		prompt += "Also, Specify that you have made use of preconfigured Knowledge Base in new line"
+
+		if additional_prompt:
+			prompt += additional_prompt
+
+		prompt += "List the lines you used as evidence with 'Cited lines:' in new line.\n"
+		prompt += "Specify that you have made use of preconfigured Knowledge Base in new line"
 		prompt += "\nAnswer: "
 
 	else:
 		prompt = f"""
-		No relevant information was retrieved for the question below.
-		Politely refuse to answer. Question: {query}
+		Question: {query}\n
+		No relevant information was retrieved for the above question.
+		Politely refuse to answer. 
 		"""
 
 	return get_llm_response(prompt)

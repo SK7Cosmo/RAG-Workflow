@@ -19,7 +19,7 @@ def perform_chunk(text, chunk_size=30):
 		if not sentence:
 			continue
 
-		# If adding sentence to the chunk exceeds chunk size, save existing chunk
+		# If adding sentence to the chunk exceeds chunk size, save existing chunk without adding the ROI sentence
 		if len((current_chunk + " " + sentence).split()) > chunk_size:
 			chunks.append(current_chunk.strip())
 			current_chunk = sentence  # current sentence marks the beginning of new chunk
@@ -52,7 +52,6 @@ def load_and_chunk_dataset(data, chunk_size=30):
 				"content": chunk_str
 			})
 	return all_chunks
-
 
 
 if __name__ == "__main__":

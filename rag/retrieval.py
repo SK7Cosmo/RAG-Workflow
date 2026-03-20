@@ -33,7 +33,7 @@ def retrieve_top_result_by_keyword_overlap(query, documents):
 	return documents.get(best_doc_id)
 
 
-def retrieve_top_results_by_distance(query, collection, categories=None, top_k=3, distance_threshold=1.0):
+def retrieve_top_results_by_distance(query, collection, category=None, top_k=3, distance_threshold=1.0):
 	"""
 		Retrieves the top_k chunks from Chroma 'collection' that are most relevant to the given query.
 		Returns a list of retrieved chunks, each containing 'chunk' text, 'doc_id', and 'distance'.
@@ -41,10 +41,11 @@ def retrieve_top_results_by_distance(query, collection, categories=None, top_k=3
 		If 'categories' are provided, will be used as a filter
 	"""
 	retrieved_chunks = []
+	fallback = False
 
-	if categories[0]:
+	if category[0]:
 		# If user opted to query with category filter
-		where_clause = {"category": {"$in": categories}}
+		where_clause = {"category": {"$in": category}}
 
 		# Perform the initial search with category filter (if provided)
 		results = collection.query(
@@ -60,9 +61,12 @@ def retrieve_top_results_by_distance(query, collection, categories=None, top_k=3
 				n_results=top_k,
 			)
 
-		# Return empty list if no results are found even without filter
-		if not results['documents'] or not results['documents'][0]:
-			return retrieved_chunks
+			# Return empty list if no results are found even without filter
+			if not results['documents'] or not results['documents'][0]:
+				return retrieved_chunks, fallback
+			else:
+				# Chunks retrieved by fallback mechanism - no filter query
+				fallback = True
 
 	else:
 		# If user opted to query without category filter
@@ -73,7 +77,7 @@ def retrieve_top_results_by_distance(query, collection, categories=None, top_k=3
 
 		# Return empty list if no results are found
 		if not results['documents'] or not results['documents'][0]:
-			return retrieved_chunks
+			return retrieved_chunks, fallback
 
 	# Gather each retrieved chunk if results are found in the query, along with its distance score
 	for i in range(len(results['documents'][0])):
@@ -86,4 +90,4 @@ def retrieve_top_results_by_distance(query, collection, categories=None, top_k=3
 			"distance": results['distances'][0][i]
 		})
 
-	return retrieved_chunks
+	return retrieved_chunks, fallback
