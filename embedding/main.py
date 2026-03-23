@@ -1,10 +1,12 @@
 import json
-
 import numpy as np
 
-from bow_vectorizer import build_vocab, create_bow_vector
-from sentence_embedder import create_sentence_embeddings, compute_cosine_similarity
+from vectorizer import build_vocab, create_bow_vector
+from ingestion.chunking import load_and_chunk_dataset
+from ingestion.chroma_store import build_chroma_collection
 from tsne_visualizer import compute_tsne_embeddings, plot_embeddings
+from sentence_embedder import create_sentence_embeddings, compute_cosine_similarity
+
 
 # Define Knowledge Base for text representation - query matching experiment
 with open("../data/sk7_knowledge_base2.json", "r") as file_obj:

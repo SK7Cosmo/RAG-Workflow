@@ -25,3 +25,4 @@ build/
 chroma/
 plots/
 *.ini
+retrieved_context.json

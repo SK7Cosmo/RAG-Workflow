@@ -4,6 +4,7 @@ import nltk
 import numpy as np
 
 from nltk.corpus import stopwords
+from rank_bm25 import BM25Okapi
 
 
 # Download Stopwords only if it is not found
@@ -76,3 +77,11 @@ def create_bow_vector(doc, vocab):
 					vector[vocab[bigram]] += 1
 
 	return vector
+
+
+def build_bm25_index(chunks):
+	"""
+	Build a BM25Okapi index from the chunk texts for lexical-based retrieval.
+	"""
+	corpus = [c["content"].lower().split() for c in chunks]
+	return BM25Okapi(corpus)

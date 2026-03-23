@@ -1,12 +1,10 @@
 # Importing Packages
-from embedding.bow_vectorizer import remove_stopwords
+from embedding.vectorizer import remove_stopwords
 
 
 def retrieve_top_result_by_keyword_overlap(query, documents):
 	"""
-	Retrieves the document that closely matches with the input query
-	Naive way of keyword match technique is used to build a less complex pipeline
-	Only the best matching document is returned
+	Retrieves the document that has the most overlapping words with the input query
 	"""
 
 	# Split the query into lowercase words and store them in a set
@@ -33,12 +31,12 @@ def retrieve_top_result_by_keyword_overlap(query, documents):
 	return documents.get(best_doc_id)
 
 
-def retrieve_top_results_by_distance(query, collection, category=None, top_k=3, distance_threshold=0.75):
+def retrieve_top_results_by_distance(query, collection, category=None, top_k=3, similarity_threshold=0.60):
 	"""
 		Retrieves the top_k chunks from Chroma 'collection' that are most relevant to the given query.
-		Returns a list of retrieved chunks, each containing 'chunk' text, 'doc_id', and 'distance'.
-		Filters the chunk only if distance metric is lesser than the threshold
-		If 'categories' are provided, will be used as a filter
+		Returns a list of retrieved chunks, each containing 'chunk' text, 'doc_id', 'distance' and 'similarity.
+		Filters the chunk only if similarity is greater than the set threshold
+		If 'category' filter is provided, will be used as a filter
 	"""
 	retrieved_chunks = []
 	fallback = False
@@ -81,13 +79,101 @@ def retrieve_top_results_by_distance(query, collection, category=None, top_k=3, 
 
 	# Gather each retrieved chunk if results are found in the query, along with its distance score
 	for i in range(len(results['documents'][0])):
-		if results['distances'][0][i] > distance_threshold:
+		distance = results['distances'][0][i]
+		similarity = 1/(1+distance)
+
+		if similarity < similarity_threshold:
 			continue 	# Not matching enough with the query
+
 		retrieved_chunks.append({
 			"content": results['documents'][0][i],
-			"doc_id": results['ids'][0][i],
+			"doc_chunk_id": results['ids'][0][i],
 			"category": results["metadatas"][0][i]["category"],
-			"distance": results['distances'][0][i]
+			"distance": distance,
+			"similarity": similarity
 		})
 
 	return retrieved_chunks, fallback
+
+
+def perform_hybrid_retrieval(query, chunks, bm25, collection, top_k=3, alpha=0.5):
+	"""
+	Merge BM25 and embedding-based results.
+
+	1. BM25 scores are computed for all the chunks
+	2. Similarity scores for top 30 (3*10) embedding chunks are calculated
+	3. Normalize both BM25 and similarity to [0,1]
+	4. Combine with weighting:
+	5. Sort by final score in descending order.
+
+	'alpha' controls how much weight lexical vs. embedding-based similarity gets.
+	1.0 => only BM25 ; 0 => only embeddings ; 0.5 => balanced
+	"""
+	retrieved_chunks = []
+
+	# Map chunk string id [chroma collection] to numerical index [unique enum idx on master chunk]
+	id_to_index = {
+		f"chunk_{chunk['doc_id']}_{chunk['chunk_id']}": idx
+		for idx, chunk in enumerate(chunks)
+	}
+
+	# BM25 scores are computed for all the chunks
+	tokenized_query = query.lower().split()
+	bm25_scores = bm25.get_scores(tokenized_query)
+	# For normalizing BM25 scores
+	bm25_min, bm25_max = (min(bm25_scores), max(bm25_scores)) if bm25_scores.size > 0 else (0, 1)
+
+	# Similarity scores for top 30 (3*10) embedding chunks are calculated
+	embed_results = collection.query(query_texts=[query], n_results=min(top_k*10, len(chunks)))
+	embed_scores_dict = {}
+	for i in range(len(embed_results['documents'][0])):
+		chunk_id = embed_results['ids'][0][i]
+		distance = embed_results['distances'][0][i]
+		similarity = 1 / (1 + distance)
+
+		# Map chunk string id [chroma collection] to numerical index [unique enum idx on master chunk]
+		chunk_num_id = id_to_index.get(chunk_id)
+		if chunk_num_id is not None:
+			embed_scores_dict[chunk_num_id] = similarity
+
+	# For normalizing embedding similarity scores
+	sims = list(embed_scores_dict.values())
+	sim_min, sim_max = min(sims), max(sims)
+
+	merged = []
+	for i, chunk in enumerate(chunks):
+		bm25_raw = bm25_scores[i]
+		# BM25 Score normalized for the chunk
+		if bm25_max != bm25_min:
+			bm25_norm = (bm25_raw - bm25_min) / (bm25_max - bm25_min)
+		else:
+			bm25_norm = 0.0
+
+		# Embedding Similarity score normalized for the chunk
+		embed_sim = embed_scores_dict.get(i, 0.0)
+		embed_sim = (embed_sim - sim_min) / (sim_max - sim_min)
+
+		# Final merged score for the chunk
+		final_score = alpha * bm25_norm + (1 - alpha) * embed_sim
+		merged.append((i, final_score))
+
+	# Filter out low-score chunks (less than 0.2)
+	merged = [item for item in merged if item[1] >= 0.2]
+
+	# Sorting and getting top 3 results
+	merged.sort(key=lambda x: x[1], reverse=True)
+	top_results = merged[:top_k]
+
+	for i, score in top_results:
+		chunk_data = chunks[i]
+		retrieved_chunks.append({
+			"content": chunk_data['content'],
+			"doc_id": chunk_data['doc_id'],
+			"chunk_id": chunk_data['chunk_id'],
+			"category": chunk_data.get("category", "unknown"),
+			"embedding_similarity_score": embed_scores_dict.get(i, 0.0),
+			"bm25_score_normalized": bm25_scores[i],
+			"final_score": score
+		})
+
+	return retrieved_chunks

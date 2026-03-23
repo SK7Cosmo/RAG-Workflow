@@ -2,10 +2,13 @@
 import json
 
 from rag.llm import get_llm_response
+from embedding.vectorizer import build_bm25_index
 from ingestion.chunking import load_and_chunk_dataset
 from ingestion.chroma_store import build_chroma_collection
-from rag.retrieval import retrieve_top_result_by_keyword_overlap, retrieve_top_results_by_distance
 from rag.llm import generate_naive_response, generate_rag_response
+from rag.retrieval import retrieve_top_result_by_keyword_overlap, retrieve_top_results_by_distance
+from rag.retrieval import perform_hybrid_retrieval
+
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -38,8 +41,9 @@ if __name__ == "__main__":
 	agent_choice = int(input("""\nChoose relevant option based on type of agent to be tested: 
 			1. Basic Agent
 			2. Custom RAG Agent - Keyword Overlap based [JSON Source]
-			3. Custom RAG Agent - Distance based [ChromaDB Source]
-			4. Custom RAG Agent - Summarization
+			3. Custom RAG Agent - Semantic based [ChromaDB Source]
+			4. Custom RAG Agent - Hybrid approach [Keyword + Semantic]
+			5. Custom RAG Agent - Summarization
 			\nChoice: """))
 	query = input("\nEnter the Prompt: ")
 
@@ -99,44 +103,79 @@ if __name__ == "__main__":
 		for chunk in retrieved_chunks:
 			rag_content.append(chunk['content'])
 
-		if fallback:
-			additional_prompt = """Mention that response could not be filtered by provided category
-								Hence, used only query to generate response - in new line\n"""
-		if rag_content[0]:
+		if retrieved_chunks:
 			additional_prompt += "List the lines you used as evidence with 'Cited lines:' in new line.\n"
 
-		print("\nRAG Agent's Response [Distance based]:\n\n", generate_rag_response(
+			if fallback:
+				additional_prompt = """Mention that response could not be filtered by provided category
+									Hence, used only query to generate response - in new line\n"""
+
+			with open("retrieved_context.json", "w") as f: 	# Saving the retrieved chunks with metadata
+				json.dump(retrieved_chunks, f, indent=4)
+
+		print("\nRAG Agent's Response [Semantic based]:\n\n", generate_rag_response(
 																					query=query,
 																					rag_content=rag_content,
 																					additional_prompt=additional_prompt))
 
 	elif agent_choice == 4:
+		# Sample Query
+		'''
+		"What do our internal company policies state?"
+		'''
+		bm25_index = build_bm25_index(master_chunks)  # Prepare BM25 index for all the words in the chunk
+
+		# retrieves top 3 chunks that match the query (and optional category filter)
+		retrieved_chunks = perform_hybrid_retrieval(
+			query=query,
+			chunks=master_chunks,
+			bm25=bm25_index,
+			collection=collection,
+			top_k=3)
+
+		for chunk in retrieved_chunks:
+			rag_content.append(chunk['content'])
+
+		if retrieved_chunks:
+			additional_prompt += "List the lines you used as evidence with 'Cited lines:' in new line.\n"
+
+			with open("retrieved_context.json", "w") as f:  # Saving the retrieved chunks with metadata
+				json.dump(retrieved_chunks, f, indent=4)
+
+		print("\nRAG Agent's Response [Hybrid Approach => Keyword + Semantic]:\n\n", generate_rag_response(
+			query=query,
+			rag_content=rag_content,
+			additional_prompt=additional_prompt))
+
+	elif agent_choice == 5:
 		# Sample Queries
 		"""
 		Summarize Company's internal policies
 		"""
 
 		# Prepare summary chunks that match the query
-		# utilizing maximum number of chunks with stricter distance metric
 		retrieved_chunks, fallback = retrieve_top_results_by_distance(
-																	query=query,
-																	collection=collection,
-																	category=[None],
-																	top_k=total_chunk_docs,
-																	distance_threshold=0.7)
+			query=query,
+			collection=collection,
+			category=[None],
+			top_k=min(10, total_chunk_docs))
 		for chunk in retrieved_chunks:
 			rag_content.append(chunk['content'])
 
-		if rag_content[0]:
+		if retrieved_chunks:
 			additional_prompt = f"""You are an expert summarizer. 
-			Please generate a concise summary of the provided context.\n"
-			Do not omit critical details that might answer the user's query.\n"
-			If you cannot produce a summary, only then say 'Summary not possible'.\n
-			Start by saying, Summary: \n"""
+					Please generate a concise summary of the provided context.\n"
+					Do not omit critical details that might answer the user's query.\n"
+					If you cannot produce a summary, only then say 'Summary not possible'.\n
+					Start by saying, Summary: \n"""
+
+			with open("retrieved_context.json", "w") as f:  # Saving the retrieved chunks with metadata
+				json.dump(retrieved_chunks, f, indent=4)
 
 		print("\nRAG Agent's Response [Summary]:\n\n", generate_rag_response(
-																			query=query,
-																			rag_content=rag_content,
-																			additional_prompt=additional_prompt))
+			query=query,
+			rag_content=rag_content,
+			additional_prompt=additional_prompt))
+
 	else:
 		print("\nInvalid choice")
